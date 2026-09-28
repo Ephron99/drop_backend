@@ -9,7 +9,12 @@ async function init() {
   if (!dbOk) {
     console.warn('[SERVER] Database init reported issues, proceeding anyway...');
   }
-  await testConnection();
+  try {
+    await testConnection();
+  } catch (err) {
+    console.warn('[SERVER] Database connection failed (expected for local dev without DB):', err.message);
+    console.log('[SERVER] Proceeding without database for local development.');
+  }
 }
 
 async function start() {

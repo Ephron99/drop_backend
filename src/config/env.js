@@ -1,17 +1,15 @@
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env') });
+require('dotenv').config();
 
-const env = {
-  PORT: parseInt(process.env.PORT, 10) || 4000,
-  DB_HOST: process.env.DB_HOST || 'mysql-2edcae98-twagirimanaephron1-1032.a.aivencloud.com',
-  DB_PORT: parseInt(process.env.DB_PORT, 10) || 19822,
-  DB_USER: process.env.DB_USER || 'avnadmin',
-  DB_PASSWORD: process.env.DB_PASSWORD || 'AVNS_5Z-UQLzpGVxay-0qmeh',
-  DB_NAME: process.env.DB_NAME || 'voltage_drop',
-  JWT_SECRET: process.env.JWT_SECRET || 'change-me-secret',
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '24h',
-  BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 10,
+module.exports = {
+  PORT: process.env.PORT || 4000,
+  DB_HOST: process.env.DB_HOST,
+  DB_PORT: process.env.DB_PORT,
+  DB_USER: process.env.DB_USER,
+  DB_PASSWORD: process.env.DB_PASSWORD,
+  DB_NAME: process.env.DB_NAME,
+  JWT_SECRET: process.env.JWT_SECRET,
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  RESEND_API_KEY: process.env.RESEND_API_KEY,
+  EMAIL_FROM: process.env.EMAIL_FROM || 'Voltage-Drop <onboarding@resend.dev>',
 };
-
-module.exports = env;

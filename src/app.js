@@ -5,10 +5,10 @@ const env = require('./config/env');
 
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
-const masterRouter = require('./routes/master');
-const progressRouter = require('./routes/progress-entries');
-const managementRouter = require('./routes/management');
-const hubsRouter = require('./routes/hubs');
+const masterRouter = require('./routes/master-local');
+const progressRouter = require('./routes/progress-local');
+const managementRouter = require('./routes/management-local');
+const hubsRouter = require('./routes/hubs-local');
 
 const app = express();
 
@@ -16,7 +16,7 @@ app.use(morgan('dev'));
 
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin: env.CORS_ORIGIN.split(','),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

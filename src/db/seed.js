@@ -36,7 +36,7 @@ const seedUsers = [
 
   // Southern Hub
   { id: 'user-hm-south', email: 'manager.southern@reg.rw',  name: 'Marie Claire Uwase',   role: 'hub_manager',    branch: null,       hubId: 'hub-southern' },
-  { id: 'user-bm-south', email: 'manager.kamonyi@reg.rw',    name: 'Fidele Nshimiyimana',  role: 'branch_manager', branch: 'Kamonyi',  hubId: 'hub-southern' },
+  { id: 'user-bm-south', email: 'twagirimanaephron1@gmail.com',    name: 'Fidele Nshimiyimana',  role: 'branch_manager', branch: 'Kamonyi',  hubId: 'hub-southern' },
 
   // Northern Hub
   { id: 'user-hm-north', email: 'manager.northern@reg.rw',  name: 'Emmanuel Bizimana',    role: 'hub_manager',    branch: null,       hubId: 'hub-northern' },

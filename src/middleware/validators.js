@@ -12,7 +12,6 @@ const VOLTAGE_LEVEL_ENUM = z.enum(['MV', 'LV']);
 const loginSchema = z.object({
   email: z.string().email('Invalid email format'),
   password: z.string().min(1, 'Password is required'),
-  role: USER_ROLE_ENUM,
 });
 
 const userCreateSchema = z.object({

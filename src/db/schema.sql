@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50) NOT NULL,
     branch VARCHAR(100),
     hub_id CHAR(36) NULL,
+    otp_code VARCHAR(6) NULL,
+    otp_expires DATETIME NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_login_at DATETIME NULL,
     FOREIGN KEY (role) REFERENCES roles(name),
