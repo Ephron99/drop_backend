@@ -37,6 +37,11 @@ app.use('/api/progress', progressRouter);
 app.use('/api/management', managementRouter);
 app.use('/api/hubs', hubsRouter);
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
 app.use((req, res) => {
   res.status(404).json({ error: 'Not Found', path: req.originalUrl });
 });
