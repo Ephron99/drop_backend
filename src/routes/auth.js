@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { Resend } = require('resend');
 const env = require('../config/env');
+const { pool } = require('../db/pool');
+const { authenticateJWT } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -15,17 +17,12 @@ function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
 }
 
-// In-memory OTP storage (for local dev without DB)
-const otpStorage = new Map();
-
-// Send OTP via email (or log to console if no email service configured)
+// Send OTP via email
 async function sendOTPEmail(email, otpCode) {
   if (!resend) {
     // Fallback to console logging if no Resend API key configured
     console.log(`\n📧 OTP for ${email}: ${otpCode}`);
     console.log('This code expires in 10 minutes\n');
-    console.log('ℹ️  To enable email delivery, set RESEND_API_KEY in your .env file');
-    console.log('   Get one at: https://resend.com\n');
     return;
   }
 
@@ -59,70 +56,38 @@ async function sendOTPEmail(email, otpCode) {
   }
 }
 
-// Demo users for local development
-const demoUsers = [
-  {
-    id: '1',
-    email: 'twagirimanaephron1@gmail.com',
-    password_hash: '$2b$10$YbRkP3zK9vQ3pGKjJ5m0E.z8xKzF5xKzF5xKzF5xKzF5xKzF5xKzF',
-    full_name: 'Branch Manager',
-    role: 'branch_manager',
-    branch: '1',
-    hub_id: null,
-  },
-  {
-    id: '2',
-    email: 'manager.southern@reg.rw',
-    password_hash: '$2b$10$YbRkP3zK9vQ3pGKjJ5m0E.z8xKzF5xKzF5xKzF5xKzF5xKzF5xKzF',
-    full_name: 'Hub Manager',
-    role: 'hub_manager',
-    branch: null,
-    hub_id: '1',
-  },
-  {
-    id: '3',
-    email: 'director@company.com',
-    password_hash: '$2b$10$YbRkP3zK9vQ3pGKjJ5m0E.z8xKzF5xKzF5xKzF5xKzF5xKzF5xKzF',
-    full_name: 'Senior Manager',
-    role: 'senior_manager',
-    branch: null,
-    hub_id: null,
-  },
-  {
-    id: '4',
-    email: 'superadmin@company.com',
-    password_hash: '$2b$10$YbRkP3zK9vQ3pGKjJ5m0E.z8xKzF5xKzF5xKzF5xKzF5xKzF5xKzF',
-    full_name: 'Admin',
-    role: 'admin',
-    branch: null,
-    hub_id: null,
-  },
-];
-
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Find user
-    const user = demoUsers.find(u => u.email === email);
+    // Find user by email only (no role needed)
+    const [users] = await pool.query(
+      `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.branch,
+              u.hub_id, h.name AS hub_name, h.region AS hub_region
+       FROM users u
+       LEFT JOIN hubs h ON u.hub_id = h.id
+       WHERE u.email = ? LIMIT 1`,
+      [email]
+    );
 
-    if (!user) {
+    if (users.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // For local dev, just check password
-    if (password !== 'password123') {
+    const user = users[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     // Generate OTP code
     const otpCode = generateOTP();
     
-    // Store OTP in memory
-    otpStorage.set(user.id, {
-      code: otpCode,
-      expires: new Date(Date.now() + 10 * 60 * 1000)
-    });
+    // Store OTP in database
+    await pool.query(
+      `UPDATE users SET otp_code = ?, otp_expires = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?`,
+      [otpCode, user.id]
+    );
 
     // Send OTP via email
     await sendOTPEmail(user.email, otpCode);
@@ -148,6 +113,32 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+router.get('/me', authenticateJWT, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT u.id, u.email, u.full_name AS name, u.role, u.branch,
+              u.hub_id AS hubId, h.name AS hubName, h.region AS hubRegion,
+              u.created_at AS createdAt, u.last_login_at AS lastLoginAt
+       FROM users u
+       LEFT JOIN hubs h ON u.hub_id = h.id
+       WHERE u.id = ? LIMIT 1`,
+      [req.user.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    return res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    console.error('Get user error:', err);
+    next(err);
+  }
+});
+
+router.post('/logout', authenticateJWT, (_req, res) => {
+  return res.json({ success: true, data: { message: 'Logged out' } });
+});
+
+// Verify OTP and issue JWT token
 router.post('/verify-otp', async (req, res, next) => {
   try {
     console.log('Body received:', JSON.stringify(req.body));
@@ -171,17 +162,35 @@ router.post('/verify-otp', async (req, res, next) => {
 
     const userId = decoded.id;
 
-    // Verify OTP
-    const otpData = otpStorage.get(userId);
-    if (!otpData || otpData.code !== otp || Date.now() > otpData.expires.getTime()) {
+    // Get user and verify OTP
+    const [rows] = await pool.query(
+      `SELECT id, otp_code, otp_expires FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = rows[0];
+    const now = new Date().toISOString();
+    const isValidOTP = 
+      user.otp_code && 
+      user.otp_expires && 
+      otp === user.otp_code && 
+      now < user.otp_expires;
+
+    if (!isValidOTP) {
       return res.status(401).json({ error: 'Invalid or expired verification code' });
     }
 
     // Clear OTP after successful verification
-    otpStorage.delete(userId);
+    await pool.query(
+      `UPDATE users SET otp_code = NULL, otp_expires = NULL WHERE id = ?`,
+      [userId]
+    );
 
     // Issue final JWT token
-    const user = demoUsers.find(u => u.id === userId);
     const finalToken = jwt.sign(
       { id: user.id, role: user.role, name: user.full_name, hubId: user.hub_id || null },
       env.JWT_SECRET,
@@ -212,6 +221,7 @@ router.post('/verify-otp', async (req, res, next) => {
   }
 });
 
+// Resend OTP code
 router.post('/resend-otp', async (req, res, next) => {
   try {
     const { token } = req.body;
@@ -224,23 +234,28 @@ router.post('/resend-otp', async (req, res, next) => {
     const decoded = jwt.verify(token, env.JWT_SECRET);
     const userId = decoded.id;
 
-    // Get user
-    const user = demoUsers.find(u => u.id === userId);
-    if (!user) {
+    // Get user email
+    const [rows] = await pool.query(
+      `SELECT email FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
     // Generate new OTP
     const otpCode = generateOTP();
     
-    // Store new OTP in memory
-    otpStorage.set(userId, {
-      code: otpCode,
-      expires: new Date(Date.now() + 10 * 60 * 1000)
-    });
+    // Store new OTP in database
+    await pool.query(
+      `UPDATE users SET otp_code = ?, otp_expires = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?`,
+      [otpCode, userId]
+    );
 
     // Send new OTP via email
-    await sendOTPEmail(user.email, otpCode);
+    const email = rows[0].email;
+    await sendOTPEmail(email, otpCode);
 
     return res.json({
       success: true,
@@ -253,44 +268,6 @@ router.post('/resend-otp', async (req, res, next) => {
     console.error('Resend OTP error:', err);
     next(err);
   }
-});
-
-router.get('/me', async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, env.JWT_SECRET);
-    const user = demoUsers.find(u => u.id === decoded.id);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    return res.json({
-      success: true,
-      data: {
-        id: user.id,
-        email: user.email,
-        name: user.full_name,
-        role: user.role,
-        branch: user.branch || null,
-        hubId: user.hub_id || null,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      }
-    });
-  } catch (err) {
-    console.error('Me error:', err);
-    res.status(401).json({ error: 'Invalid token' });
-  }
-});
-
-router.post('/logout', (_req, res) => {
-  return res.json({ success: true, data: { message: 'Logged out' } });
 });
 
 module.exports = router;

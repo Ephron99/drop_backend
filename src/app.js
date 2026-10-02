@@ -5,10 +5,10 @@ const env = require('./config/env');
 
 const authRouter = require('./routes/auth');
 const usersRouter = require('./routes/users');
-const masterRouter = require('./routes/master-local');
-const progressRouter = require('./routes/progress-local');
-const managementRouter = require('./routes/management-local');
-const hubsRouter = require('./routes/hubs-local');
+const masterRouter = require('./routes/master');
+const progressRouter = require('./routes/progress');
+const managementRouter = require('./routes/management');
+const hubsRouter = require('./routes/hubs');
 
 const app = express();
 
