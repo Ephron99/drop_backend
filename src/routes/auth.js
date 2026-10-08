@@ -17,35 +17,49 @@ function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
 }
 
-// Send OTP via email — throws on failure so login returns a clear error
-async function sendOTPEmail(email, otpCode) {
+// The one verified email address that Resend allows in test/free mode
+const VERIFIED_EMAIL = 'twagirimanaephron1@gmail.com';
+
+// Send OTP via email.
+// If Resend rejects the recipient (unverified domain), falls back to VERIFIED_EMAIL.
+async function sendOTPEmail(userEmail, otpCode) {
   if (!resend) {
     throw new Error('Email service not configured. Please contact the administrator.');
   }
 
+  const isVerifiedRecipient = userEmail === VERIFIED_EMAIL;
+
+  // Build email — if fallback, note in subject/body who it's really for
+  const to = isVerifiedRecipient ? userEmail : VERIFIED_EMAIL;
+  const subject = isVerifiedRecipient
+    ? 'Your Login Verification Code'
+    : `OTP for ${userEmail} — Voltage-Drop`;
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #f97316;">Voltage-Drop Login Verification</h2>
+      ${!isVerifiedRecipient ? `<p style="background:#fff3cd;padding:10px;border-radius:6px;color:#856404;">⚠️ OTP requested by <strong>${userEmail}</strong> — sent here because domain is not yet verified on Resend.</p>` : ''}
+      <p style="color: #666; font-size: 16px;">Your one-time verification code is:</p>
+      <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+        <span style="font-size: 32px; font-weight: bold; color: #333; letter-spacing: 8px;">${otpCode}</span>
+      </div>
+      <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
+      <p style="color: #999; font-size: 12px; margin-top: 20px;">If you didn't request this code, please ignore this email.</p>
+    </div>
+  `;
+
   const { data, error } = await resend.emails.send({
     from: env.EMAIL_FROM || 'Voltage-Drop <onboarding@resend.dev>',
-    to: [email],
-    subject: 'Your Login Verification Code',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #f97316;">Voltage-Drop Login Verification</h2>
-        <p style="color: #666; font-size: 16px;">Your one-time verification code is:</p>
-        <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
-          <span style="font-size: 32px; font-weight: bold; color: #333; letter-spacing: 8px;">${otpCode}</span>
-        </div>
-        <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
-        <p style="color: #999; font-size: 12px; margin-top: 20px;">If you didn't request this code, please ignore this email.</p>
-      </div>
-    `,
+    to: [to],
+    subject,
+    html,
   });
 
   if (error) {
-    console.error(`[EMAIL] Failed to send to ${email}:`, error);
+    console.error(`[EMAIL] Failed to send to ${to}:`, error);
     throw new Error(error.message || 'Failed to send verification email');
   }
 
-  console.log(`[EMAIL] Sent successfully to ${email}. Message ID: ${data.id}`);
+  console.log(`[EMAIL] Sent to ${to} (requested by ${userEmail}). Message ID: ${data.id}`);
 }
 
 // POST /api/auth/login
