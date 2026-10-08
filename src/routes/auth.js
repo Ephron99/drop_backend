@@ -17,50 +17,47 @@ function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
 }
 
-// Send OTP via email
+// Send OTP via email — throws on failure so login returns a clear error
 async function sendOTPEmail(email, otpCode) {
   if (!resend) {
-    // Fallback to console logging if no Resend API key configured
-    console.log(`\n📧 OTP for ${email}: ${otpCode}`);
-    console.log('This code expires in 10 minutes\n');
-    return;
+    throw new Error('Email service not configured. Please contact the administrator.');
   }
 
-  try {
-    const { data, error } = await resend.emails.send({
-      from: env.EMAIL_FROM || 'Voltage-Drop <onboarding@resend.dev>',
-      to: [email],
-      subject: 'Your Login Verification Code',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #333;">Voltage-Drop Login Verification</h2>
-          <p style="color: #666; font-size: 16px;">Your one-time verification code is:</p>
-          <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: bold; color: #333; letter-spacing: 8px;">${otpCode}</span>
-          </div>
-          <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
-          <p style="color: #999; font-size: 12px; margin-top: 20px;">If you didn't request this code, please ignore this email.</p>
+  const { data, error } = await resend.emails.send({
+    from: env.EMAIL_FROM || 'Voltage-Drop <onboarding@resend.dev>',
+    to: [email],
+    subject: 'Your Login Verification Code',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 style="color: #f97316;">Voltage-Drop Login Verification</h2>
+        <p style="color: #666; font-size: 16px;">Your one-time verification code is:</p>
+        <div style="background-color: #f5f5f5; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;">
+          <span style="font-size: 32px; font-weight: bold; color: #333; letter-spacing: 8px;">${otpCode}</span>
         </div>
-      `,
-    });
+        <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
+        <p style="color: #999; font-size: 12px; margin-top: 20px;">If you didn't request this code, please ignore this email.</p>
+      </div>
+    `,
+  });
 
-    if (error) {
-      console.error('Error sending email:', error);
-      throw error;
-    }
-
-    console.log(`Email sent successfully to ${email}. Message ID: ${data.id}`);
-  } catch (error) {
-    console.error('Failed to send email:', error);
-    throw error;
+  if (error) {
+    console.error(`[EMAIL] Failed to send to ${email}:`, error);
+    throw new Error(error.message || 'Failed to send verification email');
   }
+
+  console.log(`[EMAIL] Sent successfully to ${email}. Message ID: ${data.id}`);
 }
 
+// POST /api/auth/login
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Find user by email only (no role needed)
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Find user by email
     const [users] = await pool.query(
       `SELECT u.id, u.email, u.password_hash, u.full_name, u.role, u.branch,
               u.hub_id, h.name AS hub_name, h.region AS hub_region
@@ -80,23 +77,28 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate OTP code
+    // Generate OTP and store with MySQL NOW() to avoid timezone issues
     const otpCode = generateOTP();
-    
-    // Store OTP in database
     await pool.query(
       `UPDATE users SET otp_code = ?, otp_expires = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?`,
       [otpCode, user.id]
     );
 
-    // Send OTP via email
-    await sendOTPEmail(user.email, otpCode);
+    // Send OTP — if email fails, return a clear error (don't silently drop)
+    try {
+      await sendOTPEmail(user.email, otpCode);
+    } catch (emailErr) {
+      console.error('[LOGIN] Email delivery failed:', emailErr.message);
+      return res.status(503).json({
+        error: 'Could not send verification email. Please contact support or try again later.',
+      });
+    }
 
-    // Issue temporary JWT token (valid for 10 minutes)
+    // Temp token valid for 15 minutes (buffer for email delay)
     const tempToken = jwt.sign(
       { id: user.id, role: user.role, name: user.full_name, hubId: user.hub_id || null },
       env.JWT_SECRET,
-      { expiresIn: '10m' }
+      { expiresIn: '15m' }
     );
 
     return res.json({
@@ -104,7 +106,7 @@ router.post('/login', async (req, res, next) => {
       data: {
         token: tempToken,
         message: 'Please check your email for the verification code',
-        expiresIn: '10m',
+        expiresIn: '15m',
       },
     });
   } catch (err) {
@@ -113,6 +115,7 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
+// GET /api/auth/me
 router.get('/me', authenticateJWT, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -134,37 +137,40 @@ router.get('/me', authenticateJWT, async (req, res, next) => {
   }
 });
 
+// POST /api/auth/logout
 router.post('/logout', authenticateJWT, (_req, res) => {
   return res.json({ success: true, data: { message: 'Logged out' } });
 });
 
-// Verify OTP and issue JWT token
+// POST /api/auth/verify-otp
 router.post('/verify-otp', async (req, res, next) => {
   try {
-    console.log('Body received:', JSON.stringify(req.body));
-    console.log('OTP received:', req.body.otp);
-    console.log('Token received:', req.body.token);
-
     const { otp, token } = req.body;
 
     if (!token) {
       return res.status(401).json({ error: 'Missing authorization token' });
     }
+    if (!otp) {
+      return res.status(400).json({ error: 'OTP code is required' });
+    }
 
-    // Decode temp token to get user ID
+    // Verify temp token
     let decoded;
     try {
       decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (err) {
-      console.error('JWT verification failed:', err.message);
-      return res.status(401).json({ error: 'Invalid or expired token' });
+      return res.status(401).json({ error: 'Invalid or expired token. Please login again.' });
     }
 
     const userId = decoded.id;
 
-    // Get user and verify OTP
+    // Fetch user + validate OTP entirely in MySQL using NOW() to avoid JS timezone issues
     const [rows] = await pool.query(
-      `SELECT id, otp_code, otp_expires FROM users WHERE id = ?`,
+      `SELECT id, email, full_name, role, branch, hub_id,
+              otp_code,
+              otp_expires,
+              (otp_code IS NOT NULL AND otp_expires IS NOT NULL AND NOW() <= otp_expires) AS otp_still_valid
+       FROM users WHERE id = ?`,
       [userId]
     );
 
@@ -173,24 +179,21 @@ router.post('/verify-otp', async (req, res, next) => {
     }
 
     const user = rows[0];
-    const now = new Date().toISOString();
-    const isValidOTP = 
-      user.otp_code && 
-      user.otp_expires && 
-      otp === user.otp_code && 
-      now < user.otp_expires;
 
-    if (!isValidOTP) {
+    console.log(`[OTP] user=${user.email} stored=${user.otp_code} received=${otp} valid=${user.otp_still_valid}`);
+
+    // otp_still_valid is 1/0 from MySQL, coerce to boolean
+    if (!user.otp_still_valid || String(otp).trim() !== String(user.otp_code).trim()) {
       return res.status(401).json({ error: 'Invalid or expired verification code' });
     }
 
-    // Clear OTP after successful verification
+    // Clear OTP and update last login
     await pool.query(
-      `UPDATE users SET otp_code = NULL, otp_expires = NULL WHERE id = ?`,
-      [userId]
+      `UPDATE users SET otp_code = NULL, otp_expires = NULL, last_login_at = NOW() WHERE id = ?`,
+      [user.id]
     );
 
-    // Issue final JWT token
+    // Issue final JWT
     const finalToken = jwt.sign(
       { id: user.id, role: user.role, name: user.full_name, hubId: user.hub_id || null },
       env.JWT_SECRET,
@@ -221,7 +224,7 @@ router.post('/verify-otp', async (req, res, next) => {
   }
 });
 
-// Resend OTP code
+// POST /api/auth/resend-otp
 router.post('/resend-otp', async (req, res, next) => {
   try {
     const { token } = req.body;
@@ -230,32 +233,34 @@ router.post('/resend-otp', async (req, res, next) => {
       return res.status(401).json({ error: 'Missing authorization token' });
     }
 
-    // Decode temp token to get user ID
-    const decoded = jwt.verify(token, env.JWT_SECRET);
+    let decoded;
+    try {
+      decoded = jwt.verify(token, env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'Invalid or expired token. Please login again.' });
+    }
+
     const userId = decoded.id;
 
-    // Get user email
-    const [rows] = await pool.query(
-      `SELECT email FROM users WHERE id = ?`,
-      [userId]
-    );
-
+    const [rows] = await pool.query(`SELECT email FROM users WHERE id = ?`, [userId]);
     if (rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Generate new OTP
     const otpCode = generateOTP();
-    
-    // Store new OTP in database
     await pool.query(
       `UPDATE users SET otp_code = ?, otp_expires = DATE_ADD(NOW(), INTERVAL 10 MINUTE) WHERE id = ?`,
       [otpCode, userId]
     );
 
-    // Send new OTP via email
-    const email = rows[0].email;
-    await sendOTPEmail(email, otpCode);
+    try {
+      await sendOTPEmail(rows[0].email, otpCode);
+    } catch (emailErr) {
+      console.error('[RESEND-OTP] Email delivery failed:', emailErr.message);
+      return res.status(503).json({
+        error: 'Could not send verification email. Please contact support or try again later.',
+      });
+    }
 
     return res.json({
       success: true,

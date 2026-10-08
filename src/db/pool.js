@@ -11,6 +11,9 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   multipleStatements: true,
+  ssl: {
+    rejectUnauthorized: false, // Aiven uses self-signed certs; set to true + provide CA cert for production
+  },
 });
 
 async function testConnection() {

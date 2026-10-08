@@ -12,6 +12,7 @@ async function initDatabase() {
       user: env.DB_USER,
       password: env.DB_PASSWORD,
       multipleStatements: true,
+      ssl: { rejectUnauthorized: false },
     });
 
     const schemaPath = path.join(__dirname, 'schema.sql');
