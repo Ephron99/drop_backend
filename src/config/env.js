@@ -10,6 +10,7 @@ module.exports = {
   JWT_SECRET: process.env.JWT_SECRET,
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS || '10', 10),
   RESEND_API_KEY: process.env.RESEND_API_KEY,
   EMAIL_FROM: process.env.EMAIL_FROM || 'Voltage-Drop <onboarding@resend.dev>',
 };
